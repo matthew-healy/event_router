@@ -1,7 +1,9 @@
 package event_router
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sync"
@@ -19,18 +21,34 @@ type EventKey interface {
 	DataType() reflect.Type
 }
 
-var handlerMap = map[EventKey]EventHandler{}
+type eventHandler struct {
+	transport Transport
+	handler   EventHandler
+}
+
+var handlerMap = map[EventKey]eventHandler{}
 
 var mutex sync.RWMutex
 
-func AddRoute(eventID EventKey, handler EventHandler) error {
+func DefineJSONEvent(eventID EventKey, handler EventHandler) error {
+	return DefineEvent(eventID, JSONTransport(), handler)
+}
+
+func DefineUntransportedEvent(eventID EventKey, handler EventHandler) error {
+	return DefineEvent(eventID, NoTransport(), handler)
+}
+
+func DefineEvent(eventID EventKey, transport Transport, handler EventHandler) error {
 	mutex.Lock()
 	defer mutex.Unlock()
 
 	if _, exists := handlerMap[eventID]; exists {
 		return ErrDuplicateRouteDef
 	}
-	handlerMap[eventID] = handler
+	handlerMap[eventID] = eventHandler{
+		transport: transport,
+		handler:   handler,
+	}
 	return nil
 }
 
@@ -44,10 +62,50 @@ func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
 		return ErrNoSuchEvent
 	}
 
-	data := reflect.ValueOf(eventData)
-	if data.Type() != eventID.DataType() {
-		return ErrDataTypeMismatch
+	parsedData, err := handler.transport.Decode(eventData, eventID.DataType())
+	if err != nil {
+		return err
 	}
 
-	return handler(ctx, eventData)
+	return handler.handler(ctx, parsedData)
+}
+
+type Transport interface {
+	Decode(data any, dataType reflect.Type) (any, error)
+}
+
+type jsonTransport struct{}
+
+func (t *jsonTransport) Decode(data any, dataType reflect.Type) (any, error) {
+	b, ok := data.([]byte)
+	if !ok {
+		return nil, errors.New("malformed input")
+	}
+
+	reader := bytes.NewReader(b)
+	output := reflect.New(dataType)
+	err := json.NewDecoder(reader).Decode(output.Interface())
+	if err != nil {
+		return nil, err
+	}
+
+	return output.Interface(), nil
+}
+
+func JSONTransport() Transport {
+	return &jsonTransport{}
+}
+
+func NoTransport() Transport {
+	return &noTransport{}
+}
+
+type noTransport struct{}
+
+func (t *noTransport) Decode(data any, dataType reflect.Type) (any, error) {
+	if reflect.TypeOf(data) != dataType {
+		return nil, ErrDataTypeMismatch
+	}
+
+	return data, nil
 }

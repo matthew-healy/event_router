@@ -24,7 +24,7 @@ func TestHandle(t *testing.T) {
 	expectedData := "the-event-data"
 	ctx := context.Background()
 
-	err := AddRoute(evt, func(ctx context.Context, data any) error {
+	err := DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
 		data, ok := data.(string)
 		if !ok {
 			t.Error("received mistyped event")
@@ -42,7 +42,7 @@ func TestHandle(t *testing.T) {
 	})
 
 	t.Run("errors when defining the same route twice", func(t *testing.T) {
-		err := AddRoute(evt, func(ctx context.Context, data any) error {
+		err := DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
 			// noop
 			return nil
 		})
@@ -81,4 +81,79 @@ func expectError(t *testing.T, expected error, actual error) {
 	if !errors.Is(actual, expected) {
 		t.Errorf("wrong error - expected %v but got %v", expected, actual)
 	}
+}
+
+type User struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Playlist struct {
+	ID    string
+	title string
+}
+
+type Payment struct {
+	ID     string
+	amount int
+}
+
+type domainEvent string
+
+func (e domainEvent) DataType() reflect.Type {
+	switch e {
+	case "user.created":
+		return reflect.TypeOf(User{})
+	case "playlist.created":
+		return reflect.TypeOf(Playlist{})
+	default:
+		return nil
+	}
+}
+
+type externalEvent string
+
+func (e externalEvent) DataType() reflect.Type {
+	switch e {
+	case "ext.payment.succeeded":
+		return reflect.TypeOf(Payment{})
+	default:
+		return nil
+	}
+}
+
+func TestMoreComplexExample(t *testing.T) {
+	DefineJSONEvent(domainEvent("user.created"), func(ctx context.Context, data any) error {
+		// TODO
+		d, ok := data.(*User)
+		if !ok {
+			t.Error("got wrong data type", data)
+			t.Log("data type", reflect.TypeOf(data).String())
+		}
+
+		if d != nil && (d.ID != "usr_001" || d.Name != "Matthew") {
+			t.Error("wrong user")
+		}
+		return nil
+	})
+	DefineJSONEvent(domainEvent("playlist.created"), func(ctx context.Context, data any) error {
+		// TODO
+		return nil
+	})
+	DefineJSONEvent(externalEvent("ext.payment.succeeded"), func(ctx context.Context, data any) error {
+		// TODO
+		return nil
+	})
+
+	userData := `
+	  {
+	    "id": "usr_001",
+	    "name": "Matthew"
+	  }
+	`
+	err := HandleEvent(context.Background(), domainEvent("user.created"), []byte(userData))
+	if err != nil {
+		t.Errorf("unexpected error %v", err)
+	}
+
 }
