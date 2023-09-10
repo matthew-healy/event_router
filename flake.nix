@@ -29,7 +29,7 @@
           });
 
         eventRouterPkg = pkgs.buildGoModule {
-          pname = "event-router";
+          pname = "event_router";
           version = "v0";
 
           src = ./.;
@@ -40,9 +40,9 @@
       in
       {
         packages = rec {
-          event-router = eventRouterPkg;
+          event_router = eventRouterPkg;
 
-          default = event-router;
+          default = event_router;
         };
 
         formatter = pkgs.nixpkgs-fmt;
@@ -60,7 +60,7 @@
         };
 
         checks = {
-          event-router = eventRouterPkg;
+          event_router = eventRouterPkg;
           pre-commit = preCommitHook { doFullLint = true; };
         };
       }
