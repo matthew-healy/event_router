@@ -124,7 +124,6 @@ func (e externalEvent) DataType() reflect.Type {
 
 func TestMoreComplexExample(t *testing.T) {
 	DefineJSONEvent(domainEvent("user.created"), func(ctx context.Context, data any) error {
-		// TODO
 		d, ok := data.(*User)
 		if !ok {
 			t.Error("got wrong data type", data)

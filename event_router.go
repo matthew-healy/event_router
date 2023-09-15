@@ -31,11 +31,11 @@ var handlerMap = map[EventKey]eventHandler{}
 var mutex sync.RWMutex
 
 func DefineJSONEvent(eventID EventKey, handler EventHandler) error {
-	return DefineEvent(eventID, JSONTransport(), handler)
+	return DefineEvent(eventID, JSONTransport, handler)
 }
 
 func DefineUntransportedEvent(eventID EventKey, handler EventHandler) error {
-	return DefineEvent(eventID, NoTransport(), handler)
+	return DefineEvent(eventID, IdentityTransport, handler)
 }
 
 func DefineEvent(eventID EventKey, transport Transport, handler EventHandler) error {
@@ -52,8 +52,6 @@ func DefineEvent(eventID EventKey, transport Transport, handler EventHandler) er
 	return nil
 }
 
-// TODO: event processing middleware to handle conversions from transport types
-// to domain types
 func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
 	mutex.RLock()
 	handler, ok := handlerMap[eventID]
@@ -62,7 +60,7 @@ func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
 		return ErrNoSuchEvent
 	}
 
-	parsedData, err := handler.transport.Decode(eventData, eventID.DataType())
+	parsedData, err := handler.transport(eventData, eventID.DataType())
 	if err != nil {
 		return err
 	}
@@ -70,13 +68,9 @@ func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
 	return handler.handler(ctx, parsedData)
 }
 
-type Transport interface {
-	Decode(data any, dataType reflect.Type) (any, error)
-}
+type Transport func(any, reflect.Type) (any, error)
 
-type jsonTransport struct{}
-
-func (t *jsonTransport) Decode(data any, dataType reflect.Type) (any, error) {
+func JSONTransport(data any, dataType reflect.Type) (any, error) {
 	b, ok := data.([]byte)
 	if !ok {
 		return nil, errors.New("malformed input")
@@ -92,17 +86,7 @@ func (t *jsonTransport) Decode(data any, dataType reflect.Type) (any, error) {
 	return output.Interface(), nil
 }
 
-func JSONTransport() Transport {
-	return &jsonTransport{}
-}
-
-func NoTransport() Transport {
-	return &noTransport{}
-}
-
-type noTransport struct{}
-
-func (t *noTransport) Decode(data any, dataType reflect.Type) (any, error) {
+func IdentityTransport(data any, dataType reflect.Type) (any, error) {
 	if reflect.TypeOf(data) != dataType {
 		return nil, ErrDataTypeMismatch
 	}
