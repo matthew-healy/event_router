@@ -24,7 +24,8 @@ func TestHandle(t *testing.T) {
 	expectedData := "the-event-data"
 	ctx := context.Background()
 
-	err := DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
+	router := NewDependencyFreeRouter()
+	err := router.DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
 		data, ok := data.(string)
 		if !ok {
 			t.Error("received mistyped event")
@@ -42,7 +43,7 @@ func TestHandle(t *testing.T) {
 	})
 
 	t.Run("errors when defining the same route twice", func(t *testing.T) {
-		err := DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
+		err := router.DefineUntransportedEvent(evt, func(ctx context.Context, data any) error {
 			// noop
 			return nil
 		})
@@ -50,24 +51,24 @@ func TestHandle(t *testing.T) {
 	})
 
 	t.Run("routes handled events correctly", func(t *testing.T) {
-		err := HandleEvent(ctx, evt, expectedData)
+		err := router.HandleEvent(ctx, evt, expectedData)
 		if err != nil {
 			t.Error("unexpected error")
 		}
 	})
 
 	t.Run("returns error when passing wrong type to handler", func(t *testing.T) {
-		err := HandleEvent(ctx, evt, 123)
+		err := router.HandleEvent(ctx, evt, 123)
 		expectError(t, ErrDataTypeMismatch, err)
 	})
 
 	t.Run("returns error for unhandled event key", func(t *testing.T) {
-		err := HandleEvent(ctx, event("no"), expectedData)
+		err := router.HandleEvent(ctx, event("no"), expectedData)
 		expectError(t, ErrNoSuchEvent, err)
 	})
 
 	t.Run("different event types do not overlap", func(t *testing.T) {
-		err := HandleEvent(ctx, event2("yes"), expectedData)
+		err := router.HandleEvent(ctx, event2("yes"), expectedData)
 		expectError(t, ErrNoSuchEvent, err)
 	})
 }
@@ -123,7 +124,8 @@ func (e externalEvent) DataType() reflect.Type {
 }
 
 func TestMoreComplexExample(t *testing.T) {
-	DefineJSONEvent(domainEvent("user.created"), func(ctx context.Context, data any) error {
+	router := NewDependencyFreeRouter()
+	router.DefineJSONEvent(domainEvent("user.created"), func(ctx context.Context, data any) error {
 		d, ok := data.(*User)
 		if !ok {
 			t.Error("got wrong data type", data)
@@ -135,11 +137,11 @@ func TestMoreComplexExample(t *testing.T) {
 		}
 		return nil
 	})
-	DefineJSONEvent(domainEvent("playlist.created"), func(ctx context.Context, data any) error {
+	router.DefineJSONEvent(domainEvent("playlist.created"), func(ctx context.Context, data any) error {
 		// TODO
 		return nil
 	})
-	DefineJSONEvent(externalEvent("ext.payment.succeeded"), func(ctx context.Context, data any) error {
+	router.DefineJSONEvent(externalEvent("ext.payment.succeeded"), func(ctx context.Context, data any) error {
 		// TODO
 		return nil
 	})
@@ -150,7 +152,7 @@ func TestMoreComplexExample(t *testing.T) {
 	    "name": "Matthew"
 	  }
 	`
-	err := HandleEvent(context.Background(), domainEvent("user.created"), []byte(userData))
+	err := router.HandleEvent(context.Background(), domainEvent("user.created"), []byte(userData))
 	if err != nil {
 		t.Errorf("unexpected error %v", err)
 	}

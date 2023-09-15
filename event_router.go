@@ -9,53 +9,88 @@ import (
 	"sync"
 )
 
+// TODO: split into separate packages?
+
 var (
 	ErrDuplicateRouteDef = errors.New("duplicate route definition")
 	ErrNoSuchEvent       = errors.New("no such event")
 	ErrDataTypeMismatch  = errors.New("event data type mismatch")
 )
 
-type EventHandler func(context.Context, any) error
+type Router[Deps any] struct {
+	routeMap     map[EventKey]eventHandler[Deps]
+	dependencies Deps
+	mutex        sync.RWMutex
+}
+
+func NewRouter[Deps any](dependencies Deps) *Router[Deps] {
+	return &Router[Deps]{
+		routeMap:     map[EventKey]eventHandler[Deps]{},
+		dependencies: dependencies,
+	}
+}
+
+type DependencyFreeRouter struct {
+	r *Router[struct{}]
+}
+
+type DependencyFreeHandler func(context.Context, any) error
+
+func NewDependencyFreeRouter() *DependencyFreeRouter {
+	return &DependencyFreeRouter{
+		r: NewRouter[struct{}](struct{}{}),
+	}
+}
+
+type EventHandler[Deps any] func(context.Context, Deps, any) error
 
 type EventKey interface {
 	DataType() reflect.Type
 }
 
-type eventHandler struct {
+type eventHandler[Deps any] struct {
 	transport Transport
-	handler   EventHandler
+	handler   EventHandler[Deps]
 }
 
-var handlerMap = map[EventKey]eventHandler{}
-
-var mutex sync.RWMutex
-
-func DefineJSONEvent(eventID EventKey, handler EventHandler) error {
-	return DefineEvent(eventID, JSONTransport, handler)
+func (r *Router[Deps]) DefineJSONEvent(eventID EventKey, handler EventHandler[Deps]) error {
+	return r.DefineEvent(eventID, JSONTransport, handler)
 }
 
-func DefineUntransportedEvent(eventID EventKey, handler EventHandler) error {
-	return DefineEvent(eventID, IdentityTransport, handler)
+func (d *DependencyFreeRouter) DefineJSONEvent(eventID EventKey, handler DependencyFreeHandler) error {
+	return d.r.DefineJSONEvent(eventID, func(ctx context.Context, _ struct{}, data any) error {
+		return handler(ctx, data)
+	})
 }
 
-func DefineEvent(eventID EventKey, transport Transport, handler EventHandler) error {
-	mutex.Lock()
-	defer mutex.Unlock()
+func (r *Router[Deps]) DefineUntransportedEvent(eventID EventKey, handler EventHandler[Deps]) error {
+	return r.DefineEvent(eventID, IdentityTransport, handler)
+}
 
-	if _, exists := handlerMap[eventID]; exists {
+func (d *DependencyFreeRouter) DefineUntransportedEvent(eventID EventKey, handler DependencyFreeHandler) error {
+	return d.r.DefineUntransportedEvent(eventID, func(ctx context.Context, _ struct{}, data any) error {
+		return handler(ctx, data)
+	})
+}
+
+func (r *Router[Deps]) DefineEvent(eventID EventKey, transport Transport, handler EventHandler[Deps]) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	if _, exists := r.routeMap[eventID]; exists {
 		return ErrDuplicateRouteDef
 	}
-	handlerMap[eventID] = eventHandler{
+	r.routeMap[eventID] = eventHandler[Deps]{
 		transport: transport,
 		handler:   handler,
 	}
 	return nil
 }
 
-func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
-	mutex.RLock()
-	handler, ok := handlerMap[eventID]
-	mutex.RUnlock()
+func (r *Router[Deps]) HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
+	r.mutex.RLock()
+	handler, ok := r.routeMap[eventID]
+	r.mutex.RUnlock()
 	if !ok {
 		return ErrNoSuchEvent
 	}
@@ -65,7 +100,11 @@ func HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
 		return err
 	}
 
-	return handler.handler(ctx, parsedData)
+	return handler.handler(ctx, r.dependencies, parsedData)
+}
+
+func (d *DependencyFreeRouter) HandleEvent(ctx context.Context, eventID EventKey, eventData any) error {
+	return d.r.HandleEvent(ctx, eventID, eventData)
 }
 
 type Transport func(any, reflect.Type) (any, error)
